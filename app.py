@@ -4,6 +4,9 @@ from bs4 import BeautifulSoup
 import random
 import re
 from tqdm.asyncio import tqdm_asyncio
+from urllib.parse import urljoin
+import phonenumbers
+import requests
 
 # Função para capturar informações do Knowledge Graph
 async def extract_knowledge_graph(soup):
@@ -50,6 +53,31 @@ async def extract_knowledge_graph(soup):
         knowledge_data['hours'] = hours_elem.get_text()
 
     return knowledge_data
+
+# Função para validar e formatar números de telefone
+def validar_e_formatar_telefone(numero, regioes='BR'):
+    try:
+        numero_parseado = phonenumbers.parse(numero, regioes)
+        if phonenumbers.is_valid_number(numero_parseado):
+            formato_internacional = phonenumbers.format_number(numero_parseado, phonenumbers.PhoneNumberFormat.E164)
+            formato_nacional = phonenumbers.format_number(numero_parseado, phonenumbers.PhoneNumberFormat.NATIONAL)
+            return formato_internacional, formato_nacional
+        else:
+            return None, "Número inválido"
+    except phonenumbers.NumberParseException as e:
+        return None, str(e)
+
+# Função para consultar e validar CEP
+def consultar_cep(cep):
+    url = f'https://viacep.com.br/ws/{cep}/json/'
+    response = requests.get(url)
+    if response.status_code == 200:
+        dados = response.json()
+        if 'erro' in dados:
+            return False, "CEP não encontrado"
+        return True, dados
+    else:
+        return False, "Erro ao consultar CEP"
 
 # Função assíncrona para realizar a busca no Google
 async def google_search(query, session):
@@ -115,21 +143,27 @@ async def scrape_contact_info(url, session, deep_scan=False):
             addresses = re.findall(address_regex, soup.text)
             social_media_profiles = re.findall(social_media_regex, soup.text)
 
-            # Remover duplicatas
+            # Remover duplicatas e validar números
             emails = list(set(emails))
-            phones = list(set(phones))
+            valid_phones = []
+            for phone in set(phones):
+                internacional, nacional = validar_e_formatar_telefone(phone)
+                if internacional:
+                    valid_phones.append(internacional)
+            valid_phones = list(set(valid_phones))
+
             addresses = list(set(addresses))
             social_media_profiles = list(set(social_media_profiles))
 
             contact_info = {
                 'emails': emails,
-                'phones': phones,
+                'phones': valid_phones,
                 'addresses': addresses,
                 'social_media_profiles': social_media_profiles
             }
 
             # Realizar varredura profunda se habilitado
-            if deep_scan and not any([emails, phones, addresses, social_media_profiles]):
+            if deep_scan and not any([emails, valid_phones, addresses, social_media_profiles]):
                 possible_paths = [
                     '/contato',
                     '/fale-conosco',
@@ -187,18 +221,21 @@ async def scrape_contact_info(url, session, deep_scan=False):
 
                             # Extraindo novamente
                             emails += re.findall(email_regex, sub_soup.text)
-                            phones += re.findall(phone_regex, sub_soup.text)
+                            for phone in re.findall(phone_regex, sub_soup.text):
+                                internacional, nacional = validar_e_formatar_telefone(phone)
+                                if internacional:
+                                    valid_phones.append(internacional)
                             addresses += re.findall(address_regex, sub_soup.text)
                             social_media_profiles += re.findall(social_media_regex, sub_soup.text)
 
                             # Remover duplicatas novamente
                             emails = list(set(emails))
-                            phones = list(set(phones))
+                            valid_phones = list(set(valid_phones))
                             addresses = list(set(addresses))
                             social_media_profiles = list(set(social_media_profiles))
 
                             # Para se encontrar dados
-                            if any([emails, phones, addresses, social_media_profiles]):
+                            if any([emails, valid_phones, addresses, social_media_profiles]):
                                 break
 
             return contact_info
@@ -207,7 +244,7 @@ async def scrape_contact_info(url, session, deep_scan=False):
 
 # Função principal para executar as buscas e raspagem de dados
 async def main():
-    query = "Jockey Plaza Shopping"
+    query = "buda lanches"
 
     async with aiohttp.ClientSession() as session:
         resultados = await google_search(query, session)
@@ -227,21 +264,27 @@ async def main():
             # Exibição dos resultados
             print("\nResultados da Busca:\n")
             for i, resultado in enumerate(resultados):
+                # Verificar e imprimir informações do Knowledge Graph
                 if 'knowledge_data' in resultado:
                     knowledge_data = resultado['knowledge_data']
                     print("\nInformações do Knowledge Graph:")
                     for key, value in knowledge_data.items():
                         print(f"{key.capitalize()}: {value}")
-                else:
-                    if i < len(contact_infos):
-                        contact_info = contact_infos[i]
-                        print(f"\nTítulo: {resultado.get('title')}")
-                        print(f"Link: {resultado.get('link', 'No link')}")
-                        print(f"Emails: {contact_info.get('emails', 'No emails found')}")
-                        print(f"Phones: {contact_info.get('phones', 'No phones found')}")
-                        print(f"Addresses: {contact_info.get('addresses', 'No addresses found')}")
-                        print(f"Social Media Profiles: {contact_info.get('social_media_profiles', 'No profiles found')}")
-                print("-" * 60)
+                    print()  # Adicionar uma linha em branco para separar as seções
 
-# Rodando o código
-asyncio.run(main())
+                print(f"Resultado {i + 1}:")
+                print(f"Link: {resultado.get('link', '')}")
+
+                # Verificar se o índice existe em contact_infos
+                if i < len(contact_infos):
+                    print(f"Informações de Contato: {contact_infos[i]}")
+                else:
+                    print("Informações de Contato: Não disponível")
+
+                print()
+        else:
+            print("Nenhum resultado encontrado.")
+
+# Executar a função principal
+if __name__ == "__main__":
+    asyncio.run(main())
