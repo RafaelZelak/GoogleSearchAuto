@@ -39,8 +39,8 @@ async def extract_knowledge_graph(soup):
     if address_elem:
         knowledge_data['address'] = address_elem.get_text()
 
-    # Capturando o telefone
-    phone_elem = soup.find('div', {'data-attrid': 'kc:/location/location:phone'})
+    # Capturando o telefone usando um seletor mais preciso
+    phone_elem = soup.find('span', string=re.compile(r'^\(?\+?[0-9]{1,4}\)?[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,9}$'))
     if phone_elem:
         knowledge_data['phone'] = phone_elem.get_text()
 
@@ -130,7 +130,54 @@ async def scrape_contact_info(url, session, deep_scan=False):
 
             # Realizar varredura profunda se habilitado
             if deep_scan and not any([emails, phones, addresses, social_media_profiles]):
-                possible_paths = ['/contato', '/fale-conosco', '/contact', '/contact-us']
+                possible_paths = [
+                    '/contato',
+                    '/fale-conosco',
+                    '/contatos',
+                    '/suporte',
+                    '/informacoes-de-contato',
+                    '/email',
+                    '/telefone',
+                    '/contato-e-mail',
+                    '/contato-telefone',
+                    '/contact',
+                    '/contact-us',
+                    '/contact-info',
+                    '/email-address',
+                    '/phone-number',
+                    '/contact-details',
+                    '/customer-support',
+                    '/support-center',
+                    '/entre-em-contato',
+                    '/fale-conosco-aqui',
+                    '/contato-para-suporte',
+                    '/enviar-mensagem',
+                    '/atendimento',
+                    '/informacoes-contato',
+                    '/contato-comercial',
+                    '/contato-para-empresas',
+                    '/contato-para-clientes',
+                    '/suporte-tecnico',
+                    '/assessoria',
+                    '/contato-empresa',
+                    '/contact-support',
+                    '/customer-service',
+                    '/help',
+                    '/contact-form',
+                    '/contact-us-now',
+                    '/contact-us-page',
+                    '/connect-with-us',
+                    '/message-us',
+                    '/social',
+                    '/redes-sociais',
+                    '/facebook',
+                    '/twitter',
+                    '/instagram',
+                    '/linkedin',
+                    '/youtube',
+                    '/social-media',
+                    '/follow-us'
+                ]
                 for path in possible_paths:
                     new_url = urljoin(url, path)
                     async with session.get(new_url, headers=headers) as sub_response:
@@ -160,7 +207,7 @@ async def scrape_contact_info(url, session, deep_scan=False):
 
 # Função principal para executar as buscas e raspagem de dados
 async def main():
-    query = "Setup Tecnologia"
+    query = "Jockey Plaza Shopping"
 
     async with aiohttp.ClientSession() as session:
         resultados = await google_search(query, session)
