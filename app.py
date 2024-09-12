@@ -111,7 +111,7 @@ async def google_search(query, session):
                     'knowledge_data': knowledge_graph_data
                 })
             else:
-                print("\nKnowledge Graph não encontrado.")
+                pass
 
             # Extrair links dos resultados normais de busca
             for g in soup.find_all('div', class_='g'):
@@ -129,7 +129,68 @@ async def google_search(query, session):
         print(f"Erro ao acessar {google_search_url}: {e}")
         return []
 
-# Função assíncrona para extrair informações de contato de uma página
+def normalizar_social_media(url):
+    # Regex para redes sociais (apenas perfil principal)
+    patterns = {
+        'facebook': r'https://(?:www\.)?facebook\.com/([^/?\s\'"<>]+)(?:/.*)?',
+        'linkedin': r'https://(?:www\.)?linkedin\.com/(?:company/|in/)([^/?\s\'"<>]+)(?:/.*)?',
+        'instagram': r'https://(?:www\.)?instagram\.com/([^/?\s\'"<>]+)(?:/.*)?'
+    }
+
+    for site, pattern in patterns.items():
+        match = re.search(pattern, url)
+        if match:
+            return f'https://{site}.com/{match.group(1)}'
+
+    return None
+
+async def buscar_info_em_posts(url, session):
+    headers = {
+        "User-Agent": random.choice([
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        ])
+    }
+
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as response:
+            text = await response.text()
+            soup = BeautifulSoup(text, "html.parser")
+
+            # Expressões regulares para encontrar e-mails e números de telefone
+            email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            phone_regex = r'\(?\+?[0-9]{1,4}\)?[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,9}'
+
+            # Encontrar e-mails e números de telefone no texto geral
+            emails = re.findall(email_regex, soup.get_text())
+            phones = re.findall(phone_regex, soup.get_text())
+
+            # Encontrar e-mails e números de telefone em elementos específicos de posts
+            post_elements = soup.find_all(['div', 'p', 'span'], string=True)
+            for post in post_elements:
+                post_text = post.get_text()
+                emails.extend(re.findall(email_regex, post_text))
+                phones.extend(re.findall(phone_regex, post_text))
+
+            valid_emails = list(set(emails))
+            valid_phones = []
+            for phone in set(phones):
+                internacional, nacional = validar_e_formatar_telefone(phone)
+                if internacional:
+                    valid_phones.append(internacional)
+            valid_phones = list(set(valid_phones))
+
+            return {
+                'emails': valid_emails,
+                'phones': valid_phones
+            }
+    except asyncio.TimeoutError:
+        print(f"Timeout ao acessar {url}")
+        return {'error': 'Timeout'}
+    except Exception as e:
+        return {'error': str(e)}
+
 async def scrape_contact_info(url, session, deep_scan=False):
     if not url:
         return {'error': 'No URL provided'}
@@ -142,12 +203,16 @@ async def scrape_contact_info(url, session, deep_scan=False):
         ])
     }
 
-    social_media_regex = r'(facebook|instagram|linkedin|twitter)\.com/[^\s\'"<>]+'
+    social_media_regex = r'(?:https?://(?:www\.)?(facebook|instagram|linkedin)\.com/[^?\s\'"<>]+)'
 
     try:
-        social_media_profiles = []
+        social_media_profiles = {}
         if re.search(social_media_regex, url):
-            social_media_profiles.append(url)
+            normalized_url = normalizar_social_media(url)
+            if normalized_url:
+                key = normalized_url.split('/')[2]
+                if key not in social_media_profiles:
+                    social_media_profiles[key] = normalized_url
 
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as response:
             text = await response.text()
@@ -157,58 +222,95 @@ async def scrape_contact_info(url, session, deep_scan=False):
             phone_regex = r'\(?\+?[0-9]{1,4}\)?[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,9}'
             address_regex = r'\d+\s[\w\s.-]+,\s?[A-Za-z\s]+,\s?[A-Za-z\s]+,\s?\d{5}(-\d{4})?'
 
-            emails = re.findall(email_regex, soup.text)
-            phones = re.findall(phone_regex, soup.text)
-            addresses = re.findall(address_regex, soup.text)
-            social_media_profiles += re.findall(social_media_regex, soup.text)
+            # Encontrar emails e telefones no conteúdo das postagens
+            emails = re.findall(email_regex, soup.get_text())
+            phones = re.findall(phone_regex, soup.get_text())
+            addresses = re.findall(address_regex, soup.get_text())
+            profiles = re.findall(social_media_regex, soup.get_text())
 
-            emails = list(set(emails))
-            valid_phones = []
-            for phone in set(phones):
-                internacional, nacional = validar_e_formatar_telefone(phone)
-                if internacional:
-                    valid_phones.append(internacional)
-            valid_phones = list(set(valid_phones))
+            # Procurar informações em postagens específicas (exemplo genérico, ajustar conforme a estrutura da página)
+            post_elements = soup.find_all('div', {'class': 'x11i5rnm'})  # Ajustar seletor conforme necessário
+            for post in post_elements:
+                post_text = post.get_text()
+                emails.extend(re.findall(email_regex, post_text))
+                phones.extend(re.findall(phone_regex, post_text))
 
-            addresses = list(set(addresses))
-            social_media_profiles = list(set(social_media_profiles))
+            for profile in profiles:
+                normalized_url = normalizar_social_media(f'https://{profile[0]}.com/{profile[1]}')
+                if normalized_url:
+                    key = normalized_url.split('/')[2]
+                    if key not in social_media_profiles:
+                        social_media_profiles[key] = normalized_url
 
-            contact_info = {
-                'emails': emails,
-                'phones': valid_phones,
-                'addresses': addresses,
-                'social_media_profiles': social_media_profiles
-            }
+        # Filtrar para garantir que apenas perfis principais sejam retornados
+        valid_social_media_profiles = {}
+        for key, url in social_media_profiles.items():
+            if 'photo.php' in url or 'p/' in url:
+                continue  # Ignorar links de fotos ou vídeos
+            valid_social_media_profiles[key] = url
 
-            if deep_scan and not any([emails, valid_phones, addresses, social_media_profiles]):
-                possible_paths = [...]
-                for path in possible_paths:
-                    new_url = urljoin(url, path)
-                    try:
-                        async with session.get(new_url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as sub_response:
-                            if sub_response.status == 200:
-                                sub_text = await sub_response.text()
-                                sub_soup = BeautifulSoup(sub_text, "html.parser")
+        emails = list(set(emails))
+        valid_phones = []
+        for phone in set(phones):
+            internacional, nacional = validar_e_formatar_telefone(phone)
+            if internacional:
+                valid_phones.append(internacional)
+        valid_phones = list(set(valid_phones))
 
-                                emails += re.findall(email_regex, sub_soup.text)
-                                for phone in re.findall(phone_regex, sub_soup.text):
-                                    internacional, nacional = validar_e_formatar_telefone(phone)
-                                    if internacional:
-                                        valid_phones.append(internacional)
-                                addresses += re.findall(address_regex, sub_soup.text)
-                                social_media_profiles += re.findall(social_media_regex, sub_soup.text)
+        addresses = list(set(addresses))
+        social_media_profiles = list(set(valid_social_media_profiles.values()))
 
-                                emails = list(set(emails))
-                                valid_phones = list(set(valid_phones))
-                                addresses = list(set(addresses))
-                                social_media_profiles = list(set(social_media_profiles))
+        contact_info = {
+            'emails': emails,
+            'phones': valid_phones,
+            'addresses': addresses,
+            'social_media_profiles': social_media_profiles
+        }
 
-                                if any([emails, valid_phones, addresses, social_media_profiles]):
-                                    break
-                    except Exception as e:
-                        continue
+        if deep_scan and not any([emails, valid_phones, addresses, social_media_profiles]):
+            # Exemplo de possíveis caminhos para a varredura profunda
+            possible_paths = ['about', 'contact', 'profile', 'info']
+            for path in possible_paths:
+                new_url = urljoin(url, path)
+                try:
+                    async with session.get(new_url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as sub_response:
+                        if sub_response.status == 200:
+                            sub_text = await sub_response.text()
+                            sub_soup = BeautifulSoup(sub_text, "html.parser")
 
-            return contact_info
+                            emails += re.findall(email_regex, sub_soup.text)
+                            for phone in re.findall(phone_regex, sub_soup.text):
+                                internacional, nacional = validar_e_formatar_telefone(phone)
+                                if internacional:
+                                    valid_phones.append(internacional)
+                            addresses += re.findall(address_regex, sub_soup.text)
+                            profiles = re.findall(social_media_regex, sub_soup.text)
+
+                            for profile in profiles:
+                                normalized_url = normalizar_social_media(f'https://{profile[0]}.com/{profile[1]}')
+                                if normalized_url:
+                                    key = normalized_url.split('/')[2]
+                                    if key not in social_media_profiles:
+                                        social_media_profiles[key] = normalized_url
+
+                            # Filtrar para garantir que apenas perfis principais sejam retornados
+                            valid_social_media_profiles = {}
+                            for key, url in social_media_profiles.items():
+                                if 'photo.php' in url or 'p/' in url:
+                                    continue  # Ignorar links de fotos ou vídeos
+                                valid_social_media_profiles[key] = url
+
+                            emails = list(set(emails))
+                            valid_phones = list(set(valid_phones))
+                            addresses = list(set(addresses))
+                            social_media_profiles = list(set(valid_social_media_profiles.values()))
+
+                            if any([emails, valid_phones, addresses, social_media_profiles]):
+                                break
+                except Exception as e:
+                    continue
+
+        return contact_info
     except asyncio.TimeoutError:
         print(f"Timeout ao acessar {url}")
         return {'error': 'Timeout'}
@@ -373,7 +475,17 @@ if __name__ == "__main__":
             "CLINICA ODONTOLOGICA CEREZETTI LTDA. PIRACICABA",
             "CLINICA ODONTOLOGICA FORTINGUERRA LTDA PIRACICABA",
             "CLINICA MEDICA BALDINI LTDA PIRACICABA",
-            "CLINICA PALLIUM SERVICOS MEDICOS LTDA PIRACICABA",
+            "CLINICA PALLIUM SERVICOS MEDICOS LTDA PIRACICABA"
+            "CLINICA ODONTOLOGICA CEREZETTI LTDA. PIRACICABA",
+            "VIVENCE CLINICA PIRACICABA",
+            "CLINICA FORTINGUERRA PIRACICABA",
+            "CLINICA BALDINI PIRACICABA",
+            "CLINICA SEREDUCA PIRACICABA",
+            "CLINICA BORGES PIRACICABA",
+            "CLINICA MAVIE PIRACICABA",
+            "CLINICA PALLIUM PIRACICABA",
+            "CLINICA ORTHOLINE PIRACICABA",
+            "CLINICA RAFAEL MELLO PIRACICABA"
         ]
 
         await process_queries(queries)
