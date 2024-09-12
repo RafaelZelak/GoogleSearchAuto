@@ -9,7 +9,9 @@ import phonenumbers
 import requests
 from collections import Counter
 import json
+import sys
 
+TIMEOUT = 20
 # Função para capturar informações do Knowledge Graph
 async def extract_knowledge_graph(soup):
     knowledge_data = {}
@@ -92,28 +94,40 @@ async def google_search(query, session):
         ])
     }
 
-    async with session.get(google_search_url, headers=headers) as response:
-        text = await response.text()
-        soup = BeautifulSoup(text, "html.parser")
+    try:
+        # Adicionando timeout aqui
+        async with session.get(google_search_url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as response:
+            text = await response.text()
+            soup = BeautifulSoup(text, "html.parser")
 
-        results = []
+            results = []
 
-        # Captura do Knowledge Graph
-        knowledge_graph_data = await extract_knowledge_graph(soup)
-        if knowledge_graph_data:
-            results.append({'title': knowledge_graph_data.get('title', 'No title'), 'link': 'Info do Knowledge Graph', 'knowledge_data': knowledge_graph_data})
-        else:
-            print("\nKnowledge Graph não encontrado.")
+            # Captura do Knowledge Graph
+            knowledge_graph_data = await extract_knowledge_graph(soup)
+            if knowledge_graph_data:
+                results.append({
+                    'title': knowledge_graph_data.get('title', 'No title'),
+                    'link': 'Info do Knowledge Graph',
+                    'knowledge_data': knowledge_graph_data
+                })
+            else:
+                print("\nKnowledge Graph não encontrado.")
 
-        # Extrair links dos resultados normais de busca
-        for g in soup.find_all('div', class_='g'):
-            title = g.find('h3').text if g.find('h3') else "No title"
-            a_tag = g.find('a')
-            link = a_tag['href'] if a_tag and a_tag.has_attr('href') else None
-            snippet = g.find('span', class_='aCOpRe').text if g.find('span', class_='aCOpRe') else "No snippet"
-            results.append({'title': title, 'link': link, 'snippet': snippet})
+            # Extrair links dos resultados normais de busca
+            for g in soup.find_all('div', class_='g'):
+                title = g.find('h3').text if g.find('h3') else "No title"
+                a_tag = g.find('a')
+                link = a_tag['href'] if a_tag and a_tag.has_attr('href') else None
+                snippet = g.find('span', class_='aCOpRe').text if g.find('span', class_='aCOpRe') else "No snippet"
+                results.append({'title': title, 'link': link, 'snippet': snippet})
 
-        return results
+            return results
+    except asyncio.TimeoutError:
+        print(f"Timeout ao acessar {google_search_url}")
+        return []
+    except Exception as e:
+        print(f"Erro ao acessar {google_search_url}: {e}")
+        return []
 
 # Função assíncrona para extrair informações de contato de uma página
 async def scrape_contact_info(url, session, deep_scan=False):
@@ -297,24 +311,27 @@ def consolidar_informacoes(knowledge_data, contact_infos):
     }
 
 
-# Função principal para executar as buscas e raspagem de dados
-async def main():
-    query = "Setup Tecnologia"
+# Função para processar uma única query
+async def process_single_query(query, session):
+    print(f"Processando query: {query}", flush=True)
 
-    async with aiohttp.ClientSession() as session:
-        resultados = await google_search(query, session)
+    try:
+        # Definindo um timeout geral para a execução da função
+        resultados = await asyncio.wait_for(google_search(query, session), timeout=TIMEOUT)
 
         tasks = []
         for resultado in resultados:
             link = resultado.get('link', '')
             if link and "http" in link:
-                # Habilitar deep_scan conforme a necessidade
                 tasks.append(scrape_contact_info(link, session, deep_scan=True))
 
-        # Somente tenta raspar se houver tarefas
         if tasks:
-            # Usar tqdm para barra de progresso
-            contact_infos = await tqdm_asyncio.gather(*tasks, total=len(tasks))
+            # Usar tqdm individualmente para cada conjunto de tarefas de scraping
+            with tqdm_asyncio(total=len(tasks)) as pbar:
+                contact_infos = []
+                for info in await tqdm_asyncio.gather(*tasks):
+                    contact_infos.append(info)
+                    pbar.update()  # Atualizar a barra de progresso
 
             # Consolidação das informações
             knowledge_graph_data = None
@@ -323,23 +340,46 @@ async def main():
                     knowledge_graph_data = resultado['knowledge_data']
                     break
 
-            # Organizar o horário de funcionamento no próprio knowledge_graph
             if knowledge_graph_data and 'hours' in knowledge_graph_data:
                 knowledge_graph_data['hours'] = formatar_horario_funcionamento(knowledge_graph_data['hours'])
 
             informacoes_consolidadas = consolidar_informacoes(knowledge_graph_data or {}, contact_infos)
 
-            # Converter o resultado consolidado para JSON
             resultado_json = {
                 "knowledge_graph": knowledge_graph_data,
                 "consolidated_contact_info": informacoes_consolidadas
             }
 
-            # Exibir o JSON formatado
-            print(json.dumps(resultado_json, indent=4, ensure_ascii=False))
-        else:
-            print("Nenhum resultado encontrado.")
+            return json.dumps(resultado_json, indent=4, ensure_ascii=False)
+    except asyncio.TimeoutError:
+        print(f"Timeout ao processar query: {query}")
+    return None
 
-# Executar a função principal
+# Função principal para processar várias queries
+async def process_queries(queries):
+    async with aiohttp.ClientSession() as session:
+        tasks = [process_single_query(query, session) for query in queries]
+
+        # Coletar resultados e garantir que as barras de progresso sejam fechadas antes de imprimir
+        resultados = await asyncio.gather(*tasks)
+
+        # Exibir os resultados após todas as barras serem concluídas
+        for resultado in resultados:
+            if resultado:
+                # Imprimir resultado de forma limpa
+                sys.stdout.write("\n" + resultado + "\n")
+                sys.stdout.flush()
+
+# Main opcional para execução direta
 if __name__ == "__main__":
+    async def main():
+        queries = [
+            "CLINICA BRASIMED PIRACICABA",
+            "CLINICA FRATER PIRACICABA",
+            "CLINICA MEDSIQ PIRACICABA",
+            "CLINICA BASSALOBRE LTDA PIRACICABA"
+        ]
+
+        await process_queries(queries)
+
     asyncio.run(main())

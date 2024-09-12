@@ -1,0 +1,36 @@
+{
+    "knowledge_graph": {
+        "title": "Setup Tecnologia",
+        "rating": "4,4",
+        "review_count": "26 avaliações no Google ",
+        "address": "Endereço: R. Padre Anchieta, 2194 - Bigorrilho, Curitiba - PR, 80730-000",
+        "phone": "(41) 3013-7140",
+        "hours": {
+            "quinta-feira": "08:00–18:00",
+            "sexta-feira": "08:00–18:00",
+            "sábado": "Fechado",
+            "domingo": "Fechado",
+            "segunda-feira": "08:00–18:00",
+            "terça-feira": "08:00–18:00",
+            "quarta-feira": "08:00–18:00"
+        }
+    },
+    "consolidated_contact_info": {
+        "email": "suportedev@acessorias.com",
+        "phone": "(41) 3013-7140",
+        "address": "Endereço: R. Padre Anchieta, 2194 - Bigorrilho, Curitiba - PR, 80730-000",
+        "social_media_profiles": [
+            "https://br.linkedin.com/company/setuptecnologia",
+            "https://www.facebook.com/setuptecnologia/?locale=pt_BR"
+        ],
+        "hours": {
+            "quinta-feira": "08:00–18:00",
+            "sexta-feira": "08:00–18:00",
+            "sábado": "Fechado",
+            "domingo": "Fechado",
+            "segunda-feira": "08:00–18:00",
+            "terça-feira": "08:00–18:00",
+            "quarta-feira": "08:00–18:00"
+        }
+    }
+}
