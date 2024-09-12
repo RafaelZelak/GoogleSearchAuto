@@ -10,6 +10,7 @@ import requests
 from collections import Counter
 import json
 import sys
+import time
 
 TIMEOUT = 20
 # Função para capturar informações do Knowledge Graph
@@ -95,7 +96,6 @@ async def google_search(query, session):
     }
 
     try:
-        # Adicionando timeout aqui
         async with session.get(google_search_url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as response:
             text = await response.text()
             soup = BeautifulSoup(text, "html.parser")
@@ -142,31 +142,26 @@ async def scrape_contact_info(url, session, deep_scan=False):
         ])
     }
 
-    # Expressão regular para capturar redes sociais
     social_media_regex = r'(facebook|instagram|linkedin|twitter)\.com/[^\s\'"<>]+'
 
     try:
-        # Verificar se o próprio URL é uma rede social
         social_media_profiles = []
         if re.search(social_media_regex, url):
             social_media_profiles.append(url)
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as response:
             text = await response.text()
             soup = BeautifulSoup(text, "html.parser")
 
-            # Expressões regulares para capturar email, telefone e outros dados
-            email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b'
+            email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
             phone_regex = r'\(?\+?[0-9]{1,4}\)?[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,9}'
             address_regex = r'\d+\s[\w\s.-]+,\s?[A-Za-z\s]+,\s?[A-Za-z\s]+,\s?\d{5}(-\d{4})?'
 
-            # Extraindo emails, telefones, endereços e redes sociais do conteúdo da página
             emails = re.findall(email_regex, soup.text)
             phones = re.findall(phone_regex, soup.text)
             addresses = re.findall(address_regex, soup.text)
-            social_media_profiles += re.findall(social_media_regex, soup.text)  # Adicionar redes sociais do conteúdo da página
+            social_media_profiles += re.findall(social_media_regex, soup.text)
 
-            # Remover duplicatas e validar números
             emails = list(set(emails))
             valid_phones = []
             for phone in set(phones):
@@ -185,50 +180,40 @@ async def scrape_contact_info(url, session, deep_scan=False):
                 'social_media_profiles': social_media_profiles
             }
 
-            # Realizar varredura profunda se habilitado
             if deep_scan and not any([emails, valid_phones, addresses, social_media_profiles]):
-                possible_paths = [
-                    '/contato', '/fale-conosco', '/contatos', '/suporte', '/informacoes-de-contato', '/email', '/telefone',
-                    '/contato-e-mail', '/contato-telefone', '/contact', '/contact-us', '/contact-info', '/email-address',
-                    '/phone-number', '/contact-details', '/customer-support', '/support-center', '/entre-em-contato',
-                    '/fale-conosco-aqui', '/contato-para-suporte', '/enviar-mensagem', '/atendimento', '/informacoes-contato',
-                    '/contato-comercial', '/contato-para-empresas', '/contato-para-clientes', '/suporte-tecnico',
-                    '/assessoria', '/contato-empresa', '/contact-support', '/customer-service', '/help', '/contact-form',
-                    '/contact-us-now', '/contact-us-page', '/connect-with-us', '/message-us', '/social', '/redes-sociais',
-                    '/facebook', '/twitter', '/instagram', '/linkedin', '/youtube', '/social-media', '/follow-us'
-                ]
+                possible_paths = [...]
                 for path in possible_paths:
                     new_url = urljoin(url, path)
-                    async with session.get(new_url, headers=headers) as sub_response:
-                        if sub_response.status == 200:
-                            sub_text = await sub_response.text()
-                            sub_soup = BeautifulSoup(sub_text, "html.parser")
+                    try:
+                        async with session.get(new_url, headers=headers, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as sub_response:
+                            if sub_response.status == 200:
+                                sub_text = await sub_response.text()
+                                sub_soup = BeautifulSoup(sub_text, "html.parser")
 
-                            # Extraindo novamente
-                            emails += re.findall(email_regex, sub_soup.text)
-                            for phone in re.findall(phone_regex, sub_soup.text):
-                                internacional, nacional = validar_e_formatar_telefone(phone)
-                                if internacional:
-                                    valid_phones.append(internacional)
-                            addresses += re.findall(address_regex, sub_soup.text)
-                            social_media_profiles += re.findall(social_media_regex, sub_soup.text)
+                                emails += re.findall(email_regex, sub_soup.text)
+                                for phone in re.findall(phone_regex, sub_soup.text):
+                                    internacional, nacional = validar_e_formatar_telefone(phone)
+                                    if internacional:
+                                        valid_phones.append(internacional)
+                                addresses += re.findall(address_regex, sub_soup.text)
+                                social_media_profiles += re.findall(social_media_regex, sub_soup.text)
 
-                            # Remover duplicatas novamente
-                            emails = list(set(emails))
-                            valid_phones = list(set(valid_phones))
-                            addresses = list(set(addresses))
-                            social_media_profiles = list(set(social_media_profiles))
+                                emails = list(set(emails))
+                                valid_phones = list(set(valid_phones))
+                                addresses = list(set(addresses))
+                                social_media_profiles = list(set(social_media_profiles))
 
-                            # Para se encontrar dados
-                            if any([emails, valid_phones, addresses, social_media_profiles]):
-                                break
+                                if any([emails, valid_phones, addresses, social_media_profiles]):
+                                    break
+                    except Exception as e:
+                        continue
 
             return contact_info
+    except asyncio.TimeoutError:
+        print(f"Timeout ao acessar {url}")
+        return {'error': 'Timeout'}
     except Exception as e:
         return {'error': str(e)}
-
-# Função para formatar o horário de funcionamento
-import re
 
 # Função para formatar o horário de funcionamento
 def formatar_horario_funcionamento(horarios_raw):
@@ -310,13 +295,11 @@ def consolidar_informacoes(knowledge_data, contact_infos):
         'hours': hours_final
     }
 
-
 # Função para processar uma única query
-async def process_single_query(query, session):
+async def process_single_query(query, session, progress_bar):
     print(f"Processando query: {query}", flush=True)
 
     try:
-        # Definindo um timeout geral para a execução da função
         resultados = await asyncio.wait_for(google_search(query, session), timeout=TIMEOUT)
 
         tasks = []
@@ -325,50 +308,57 @@ async def process_single_query(query, session):
             if link and "http" in link:
                 tasks.append(scrape_contact_info(link, session, deep_scan=True))
 
+        contact_infos = []
         if tasks:
-            # Usar tqdm individualmente para cada conjunto de tarefas de scraping
-            with tqdm_asyncio(total=len(tasks)) as pbar:
-                contact_infos = []
-                for info in await tqdm_asyncio.gather(*tasks):
-                    contact_infos.append(info)
-                    pbar.update()  # Atualizar a barra de progresso
+            for info in await asyncio.gather(*tasks):
+                contact_infos.append(info)
 
-            # Consolidação das informações
-            knowledge_graph_data = None
-            for resultado in resultados:
-                if 'knowledge_data' in resultado:
-                    knowledge_graph_data = resultado['knowledge_data']
-                    break
+        knowledge_graph_data = None
+        for resultado in resultados:
+            if 'knowledge_data' in resultado:
+                knowledge_graph_data = resultado['knowledge_data']
+                break
 
-            if knowledge_graph_data and 'hours' in knowledge_graph_data:
-                knowledge_graph_data['hours'] = formatar_horario_funcionamento(knowledge_graph_data['hours'])
+        if knowledge_graph_data and 'hours' in knowledge_graph_data:
+            knowledge_graph_data['hours'] = formatar_horario_funcionamento(knowledge_graph_data['hours'])
 
-            informacoes_consolidadas = consolidar_informacoes(knowledge_graph_data or {}, contact_infos)
+        informacoes_consolidadas = consolidar_informacoes(knowledge_graph_data or {}, contact_infos)
 
-            resultado_json = {
-                "knowledge_graph": knowledge_graph_data,
-                "consolidated_contact_info": informacoes_consolidadas
-            }
+        resultado_json = {
+            "knowledge_graph": knowledge_graph_data,
+            "consolidated_contact_info": informacoes_consolidadas
+        }
 
-            return json.dumps(resultado_json, indent=4, ensure_ascii=False)
+        return json.dumps(resultado_json, indent=4, ensure_ascii=False)
     except asyncio.TimeoutError:
         print(f"Timeout ao processar query: {query}")
+    finally:
+        progress_bar.update(1)  # Atualizar a barra global após processar a query
     return None
 
 # Função principal para processar várias queries
 async def process_queries(queries):
+    total_queries = len(queries)
+
     async with aiohttp.ClientSession() as session:
-        tasks = [process_single_query(query, session) for query in queries]
+        start_time = time.time()  # Tempo de início
+        with tqdm_asyncio(total=total_queries, desc="Processing queries") as global_pbar:
+            tasks = [process_single_query(query, session, global_pbar) for query in queries]
 
-        # Coletar resultados e garantir que as barras de progresso sejam fechadas antes de imprimir
-        resultados = await asyncio.gather(*tasks)
+            # Coletar resultados e garantir que as barras de progresso sejam fechadas antes de imprimir
+            resultados = await asyncio.gather(*tasks)
 
-        # Exibir os resultados após todas as barras serem concluídas
-        for resultado in resultados:
-            if resultado:
-                # Imprimir resultado de forma limpa
-                sys.stdout.write("\n" + resultado + "\n")
-                sys.stdout.flush()
+            # Exibir os resultados após todas as barras serem concluídas
+            for resultado in resultados:
+                if resultado:
+                    # Imprimir resultado de forma limpa
+                    sys.stdout.write("\n" + resultado + "\n")
+                    sys.stdout.write("-" * 80 + "\n")  # Linha de separação entre resultados
+                    sys.stdout.flush()
+
+        end_time = time.time()  # Tempo de término
+        elapsed_time = end_time - start_time  # Tempo decorrido
+        print(f"\nTempo total de execução: {elapsed_time:.2f} segundos")
 
 # Main opcional para execução direta
 if __name__ == "__main__":
@@ -377,7 +367,13 @@ if __name__ == "__main__":
             "CLINICA BRASIMED PIRACICABA",
             "CLINICA FRATER PIRACICABA",
             "CLINICA MEDSIQ PIRACICABA",
-            "CLINICA BASSALOBRE LTDA PIRACICABA"
+            "CLINICA BASSALOBRE LTDA PIRACICABA",
+            "CLINICA REVIVA SAUDE LTDA PIRACICABA",
+            "VITTACOR CLINICA MEDICA LTDA PIRACICABA",
+            "CLINICA ODONTOLOGICA CEREZETTI LTDA. PIRACICABA",
+            "CLINICA ODONTOLOGICA FORTINGUERRA LTDA PIRACICABA",
+            "CLINICA MEDICA BALDINI LTDA PIRACICABA",
+            "CLINICA PALLIUM SERVICOS MEDICOS LTDA PIRACICABA",
         ]
 
         await process_queries(queries)
