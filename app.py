@@ -7,6 +7,8 @@ from tqdm.asyncio import tqdm_asyncio
 from urllib.parse import urljoin
 import phonenumbers
 import requests
+from collections import Counter
+import json
 
 # Função para capturar informações do Knowledge Graph
 async def extract_knowledge_graph(soup):
@@ -126,7 +128,15 @@ async def scrape_contact_info(url, session, deep_scan=False):
         ])
     }
 
+    # Expressão regular para capturar redes sociais
+    social_media_regex = r'(facebook|instagram|linkedin|twitter)\.com/[^\s\'"<>]+'
+
     try:
+        # Verificar se o próprio URL é uma rede social
+        social_media_profiles = []
+        if re.search(social_media_regex, url):
+            social_media_profiles.append(url)
+
         async with session.get(url, headers=headers) as response:
             text = await response.text()
             soup = BeautifulSoup(text, "html.parser")
@@ -135,13 +145,12 @@ async def scrape_contact_info(url, session, deep_scan=False):
             email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b'
             phone_regex = r'\(?\+?[0-9]{1,4}\)?[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,4}[\s.-]?[0-9]{1,9}'
             address_regex = r'\d+\s[\w\s.-]+,\s?[A-Za-z\s]+,\s?[A-Za-z\s]+,\s?\d{5}(-\d{4})?'
-            social_media_regex = r'(facebook|instagram|linkedin|twitter)\.com/[^\s\'"<>]+'
 
-            # Extraindo emails, telefones, endereços e redes sociais
+            # Extraindo emails, telefones, endereços e redes sociais do conteúdo da página
             emails = re.findall(email_regex, soup.text)
             phones = re.findall(phone_regex, soup.text)
             addresses = re.findall(address_regex, soup.text)
-            social_media_profiles = re.findall(social_media_regex, soup.text)
+            social_media_profiles += re.findall(social_media_regex, soup.text)  # Adicionar redes sociais do conteúdo da página
 
             # Remover duplicatas e validar números
             emails = list(set(emails))
@@ -165,52 +174,14 @@ async def scrape_contact_info(url, session, deep_scan=False):
             # Realizar varredura profunda se habilitado
             if deep_scan and not any([emails, valid_phones, addresses, social_media_profiles]):
                 possible_paths = [
-                    '/contato',
-                    '/fale-conosco',
-                    '/contatos',
-                    '/suporte',
-                    '/informacoes-de-contato',
-                    '/email',
-                    '/telefone',
-                    '/contato-e-mail',
-                    '/contato-telefone',
-                    '/contact',
-                    '/contact-us',
-                    '/contact-info',
-                    '/email-address',
-                    '/phone-number',
-                    '/contact-details',
-                    '/customer-support',
-                    '/support-center',
-                    '/entre-em-contato',
-                    '/fale-conosco-aqui',
-                    '/contato-para-suporte',
-                    '/enviar-mensagem',
-                    '/atendimento',
-                    '/informacoes-contato',
-                    '/contato-comercial',
-                    '/contato-para-empresas',
-                    '/contato-para-clientes',
-                    '/suporte-tecnico',
-                    '/assessoria',
-                    '/contato-empresa',
-                    '/contact-support',
-                    '/customer-service',
-                    '/help',
-                    '/contact-form',
-                    '/contact-us-now',
-                    '/contact-us-page',
-                    '/connect-with-us',
-                    '/message-us',
-                    '/social',
-                    '/redes-sociais',
-                    '/facebook',
-                    '/twitter',
-                    '/instagram',
-                    '/linkedin',
-                    '/youtube',
-                    '/social-media',
-                    '/follow-us'
+                    '/contato', '/fale-conosco', '/contatos', '/suporte', '/informacoes-de-contato', '/email', '/telefone',
+                    '/contato-e-mail', '/contato-telefone', '/contact', '/contact-us', '/contact-info', '/email-address',
+                    '/phone-number', '/contact-details', '/customer-support', '/support-center', '/entre-em-contato',
+                    '/fale-conosco-aqui', '/contato-para-suporte', '/enviar-mensagem', '/atendimento', '/informacoes-contato',
+                    '/contato-comercial', '/contato-para-empresas', '/contato-para-clientes', '/suporte-tecnico',
+                    '/assessoria', '/contato-empresa', '/contact-support', '/customer-service', '/help', '/contact-form',
+                    '/contact-us-now', '/contact-us-page', '/connect-with-us', '/message-us', '/social', '/redes-sociais',
+                    '/facebook', '/twitter', '/instagram', '/linkedin', '/youtube', '/social-media', '/follow-us'
                 ]
                 for path in possible_paths:
                     new_url = urljoin(url, path)
@@ -242,9 +213,93 @@ async def scrape_contact_info(url, session, deep_scan=False):
     except Exception as e:
         return {'error': str(e)}
 
+# Função para formatar o horário de funcionamento
+import re
+
+# Função para formatar o horário de funcionamento
+def formatar_horario_funcionamento(horarios_raw):
+    if isinstance(horarios_raw, str):
+        # Remover partes desnecessárias e formatar corretamente
+        horarios_limp = re.sub(r"Horário de funcionamento: Aberto ⋅ ", "", horarios_raw)
+        horarios_limp = re.sub(r"Sugerir novos horários.*$", "", horarios_limp)
+
+        # Adicionar quebras de linha entre os dias da semana
+        horarios_limp = re.sub(r'(segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo)', r'\n\1', horarios_limp)
+
+        # Remover prefixos como "00"
+        horarios_limp = re.sub(r'00(\w+-feira)', r'\1', horarios_limp)
+
+        # Separar "Fechado" corretamente dos dias da semana
+        horarios_limp = re.sub(r'(Fechado)(\w+-feira)', r'\1\n\2', horarios_limp)
+
+        # Dividir a string em linhas e processar cada linha
+        linhas = horarios_limp.strip().split("\n")
+        horarios_dict = {}
+
+        for linha in linhas:
+            # Encontrar dias da semana e horários usando regex
+            match = re.match(r'(segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo)\s*(\d{2}:\d{2}–\d{2}:\d{2}|Fechado)', linha)
+            if match:
+                dia, horario = match.groups()
+                horarios_dict[dia] = horario
+
+        return horarios_dict
+
+    elif isinstance(horarios_raw, dict):
+        # Se os horários já estiverem no formato de dicionário
+        return horarios_raw
+
+    return None  # Retorna None se o formato for desconhecido
+
+# Função para consolidar as informações coletadas
+def consolidar_informacoes(knowledge_data, contact_infos):
+    # Inicializar os contadores para os dados
+    emails_counter = Counter()
+    phones_counter = Counter()
+    addresses_counter = Counter()
+    social_media_profiles = []
+
+    # Preencher os contadores com as informações extraídas
+    for contact_info in contact_infos:
+        if 'emails' in contact_info:
+            emails_counter.update(contact_info['emails'])
+        if 'phones' in contact_info:
+            phones_counter.update(contact_info['phones'])
+        if 'addresses' in contact_info:
+            addresses_counter.update(contact_info['addresses'])
+        if 'social_media_profiles' in contact_info:
+            social_media_profiles.extend(contact_info['social_media_profiles'])  # Redes sociais
+
+    # Escolher os valores mais comuns ou usar os do Knowledge Graph
+    email_final = knowledge_data.get('email') or (emails_counter.most_common(1)[0][0] if emails_counter else None)
+    phone_final = knowledge_data.get('phone') or (phones_counter.most_common(1)[0][0] if phones_counter else None)
+    address_final = knowledge_data.get('address') or (addresses_counter.most_common(1)[0][0] if addresses_counter else None)
+
+    # Adicionar redes sociais do Knowledge Graph, se existirem
+    if knowledge_data.get('social_media_profiles'):
+        social_media_profiles.extend(knowledge_data['social_media_profiles'])
+
+    # Remover duplicatas das redes sociais
+    social_media_profiles = list(set(social_media_profiles))
+
+    # Formatar o horário de funcionamento
+    hours_final = None
+    if 'hours' in knowledge_data:
+        hours_final = formatar_horario_funcionamento(knowledge_data['hours'])
+
+    # Retornar as informações consolidadas
+    return {
+        'email': email_final,
+        'phone': phone_final,
+        'address': address_final,
+        'social_media_profiles': social_media_profiles,
+        'hours': hours_final
+    }
+
+
 # Função principal para executar as buscas e raspagem de dados
 async def main():
-    query = "buda lanches"
+    query = "Setup Tecnologia"
 
     async with aiohttp.ClientSession() as session:
         resultados = await google_search(query, session)
@@ -261,27 +316,27 @@ async def main():
             # Usar tqdm para barra de progresso
             contact_infos = await tqdm_asyncio.gather(*tasks, total=len(tasks))
 
-            # Exibição dos resultados
-            print("\nResultados da Busca:\n")
-            for i, resultado in enumerate(resultados):
-                # Verificar e imprimir informações do Knowledge Graph
+            # Consolidação das informações
+            knowledge_graph_data = None
+            for resultado in resultados:
                 if 'knowledge_data' in resultado:
-                    knowledge_data = resultado['knowledge_data']
-                    print("\nInformações do Knowledge Graph:")
-                    for key, value in knowledge_data.items():
-                        print(f"{key.capitalize()}: {value}")
-                    print()  # Adicionar uma linha em branco para separar as seções
+                    knowledge_graph_data = resultado['knowledge_data']
+                    break
 
-                print(f"Resultado {i + 1}:")
-                print(f"Link: {resultado.get('link', '')}")
+            # Organizar o horário de funcionamento no próprio knowledge_graph
+            if knowledge_graph_data and 'hours' in knowledge_graph_data:
+                knowledge_graph_data['hours'] = formatar_horario_funcionamento(knowledge_graph_data['hours'])
 
-                # Verificar se o índice existe em contact_infos
-                if i < len(contact_infos):
-                    print(f"Informações de Contato: {contact_infos[i]}")
-                else:
-                    print("Informações de Contato: Não disponível")
+            informacoes_consolidadas = consolidar_informacoes(knowledge_graph_data or {}, contact_infos)
 
-                print()
+            # Converter o resultado consolidado para JSON
+            resultado_json = {
+                "knowledge_graph": knowledge_graph_data,
+                "consolidated_contact_info": informacoes_consolidadas
+            }
+
+            # Exibir o JSON formatado
+            print(json.dumps(resultado_json, indent=4, ensure_ascii=False))
         else:
             print("Nenhum resultado encontrado.")
 
