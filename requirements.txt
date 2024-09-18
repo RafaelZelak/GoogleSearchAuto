@@ -3,3 +3,7 @@ asyncio
 bs4
 tqdm
 phonenumbers
+beautifulsoup4
+requests
+selenium
+webdriver-manager
